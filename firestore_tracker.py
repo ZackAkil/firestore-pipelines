@@ -10,11 +10,13 @@ import json
 import time
 import traceback
 from datetime import datetime
-from typing import Any, Callable, Dict, Optional, Union
+from typing import Any, Callable, Dict, Optional, Union, List
 from google.cloud import firestore
 from google.cloud.firestore_v1 import FieldFilter
 import hashlib
 import inspect
+import csv
+import io
 
 
 class FirestoreTracker:
@@ -318,6 +320,181 @@ class FirestoreTracker:
             }
 
         return stats
+
+    def export_to_csv(
+        self,
+        filename: Optional[str] = None,
+        function_name: Optional[str] = None,
+        status: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: int = 1000,
+        include_input: bool = True,
+        include_output: bool = True,
+        include_errors: bool = True
+    ) -> str:
+        """
+        Export tracked executions to CSV format.
+
+        Args:
+            filename: Optional filename to save CSV to. If None, returns CSV string
+            function_name: Filter by function name
+            status: Filter by status (started, completed, failed)
+            start_time: Filter by minimum timestamp
+            end_time: Filter by maximum timestamp
+            limit: Maximum number of results to export
+            include_input: Whether to include input data in export
+            include_output: Whether to include output data in export
+            include_errors: Whether to include error details in export
+
+        Returns:
+            CSV string if filename is None, otherwise path to saved file
+        """
+        # Query executions with filters
+        executions = self.query_executions(
+            function_name=function_name,
+            status=status,
+            start_time=start_time,
+            end_time=end_time,
+            limit=limit
+        )
+
+        if not executions:
+            return "No executions found matching the criteria."
+
+        # Prepare CSV fields
+        fieldnames = [
+            'execution_id', 'function_name', 'module', 'timestamp',
+            'status', 'execution_time_ms'
+        ]
+
+        if include_input:
+            fieldnames.extend(['input_args', 'input_kwargs'])
+
+        if include_output:
+            fieldnames.append('output')
+
+        if include_errors:
+            fieldnames.extend(['error_type', 'error_message'])
+
+        # Add custom fields if they exist
+        custom_field_names = set()
+        for exec_data in executions:
+            if 'custom_fields' in exec_data:
+                custom_field_names.update(exec_data['custom_fields'].keys())
+
+        for field in sorted(custom_field_names):
+            fieldnames.append(f'custom_{field}')
+
+        # Create CSV
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
+        writer.writeheader()
+
+        for exec_data in executions:
+            row = {
+                'execution_id': exec_data.get('execution_id', ''),
+                'function_name': exec_data.get('function_name', ''),
+                'module': exec_data.get('module', ''),
+                'timestamp': exec_data.get('timestamp', ''),
+                'status': exec_data.get('status', ''),
+                'execution_time_ms': exec_data.get('execution_time_ms', '')
+            }
+
+            if include_input and 'input' in exec_data:
+                row['input_args'] = json.dumps(exec_data['input'].get('args', []))
+                row['input_kwargs'] = json.dumps(exec_data['input'].get('kwargs', {}))
+
+            if include_output and 'output' in exec_data:
+                row['output'] = json.dumps(exec_data.get('output', ''))
+
+            if include_errors and 'error' in exec_data:
+                row['error_type'] = exec_data['error'].get('type', '')
+                row['error_message'] = exec_data['error'].get('message', '')
+
+            # Add custom fields
+            if 'custom_fields' in exec_data:
+                for field, value in exec_data['custom_fields'].items():
+                    row[f'custom_{field}'] = value
+
+            writer.writerow(row)
+
+        csv_content = output.getvalue()
+        output.close()
+
+        if filename:
+            with open(filename, 'w', newline='') as f:
+                f.write(csv_content)
+            return filename
+        else:
+            return csv_content
+
+    def export_statistics_to_csv(
+        self,
+        filename: Optional[str] = None,
+        function_names: Optional[List[str]] = None
+    ) -> str:
+        """
+        Export statistics for tracked functions to CSV format.
+
+        Args:
+            filename: Optional filename to save CSV to. If None, returns CSV string
+            function_names: List of function names to get statistics for.
+                          If None, gets stats for all unique function names.
+
+        Returns:
+            CSV string if filename is None, otherwise path to saved file
+        """
+        # If no function names provided, get all unique function names
+        if function_names is None:
+            all_executions = self.query_executions(limit=10000)
+            function_names = list(set(
+                exec_data.get('function_name')
+                for exec_data in all_executions
+                if exec_data.get('function_name')
+            ))
+
+        # Prepare CSV
+        fieldnames = [
+            'function_name', 'total_executions', 'completed', 'failed',
+            'success_rate', 'avg_execution_time_ms', 'min_execution_time_ms',
+            'max_execution_time_ms'
+        ]
+
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for func_name in sorted(function_names):
+            stats = self.get_statistics(func_name)
+
+            row = {
+                'function_name': func_name,
+                'total_executions': stats.get('total_executions', 0),
+                'completed': stats.get('completed', 0),
+                'failed': stats.get('failed', 0),
+                'success_rate': f"{stats.get('success_rate', 0):.2f}%"
+            }
+
+            if 'performance' in stats:
+                perf = stats['performance']
+                row.update({
+                    'avg_execution_time_ms': f"{perf.get('avg_execution_time_ms', 0):.2f}",
+                    'min_execution_time_ms': f"{perf.get('min_execution_time_ms', 0):.2f}",
+                    'max_execution_time_ms': f"{perf.get('max_execution_time_ms', 0):.2f}"
+                })
+
+            writer.writerow(row)
+
+        csv_content = output.getvalue()
+        output.close()
+
+        if filename:
+            with open(filename, 'w', newline='') as f:
+                f.write(csv_content)
+            return filename
+        else:
+            return csv_content
 
 
 # Create a default tracker instance for convenience
