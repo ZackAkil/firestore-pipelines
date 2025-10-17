@@ -192,6 +192,39 @@ def run_examples():
     )
     print(f"Failed operations: {len(errors)} found")
 
+    # CSV Export Examples
+    print("\n--- CSV Export Examples ---")
+
+    # Export executions to CSV file
+    csv_file = custom_tracker.export_to_csv(
+        filename="tracked_executions.csv",
+        function_name="predict_sentiment",
+        status="completed",
+        limit=100
+    )
+    print(f"Exported executions to: {csv_file}")
+
+    # Export to CSV string (useful for APIs or further processing)
+    csv_data = custom_tracker.export_to_csv(
+        function_name="predict_sentiment",
+        include_input=True,
+        include_output=True,
+        limit=10
+    )
+    print(f"CSV data preview (first 200 chars): {csv_data[:200]}...")
+
+    # Export statistics for all functions to CSV
+    stats_file = custom_tracker.export_statistics_to_csv(
+        filename="function_statistics.csv"
+    )
+    print(f"Exported statistics to: {stats_file}")
+
+    # Export statistics for specific functions
+    selected_stats = error_tracker.export_statistics_to_csv(
+        function_names=["risky_operation", "simple_calculation"]
+    )
+    print(f"Statistics CSV preview: {selected_stats[:200]}...")
+
 
 if __name__ == "__main__":
     run_examples()
